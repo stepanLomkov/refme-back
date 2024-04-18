@@ -7,7 +7,11 @@ const app            = express();
 const port = 8000;
 
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost:8080');
 
+    next();
+})
 const client = new MongoClient(db.url);
 
 MongoClient.connect(db.url, (err, database) => {
@@ -27,8 +31,6 @@ const start = async () => {
         app.listen(port, () => {
             console.log('We are live on ' + port);
         });
-        // const vacancies = await client.db().collection('vacancies').find().toArray();
-        // console.log({ vacancies })
     } catch {
         console.log('fail connecting')
     }
