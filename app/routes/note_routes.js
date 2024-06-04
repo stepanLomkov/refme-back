@@ -3,13 +3,48 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
 module.exports = function(app, db) {
-    app.get('/list', async (_, res) => {
+    app.get('/list', async (req, res) => {
         try {
-            const vacancies = await db.collection('vacancies').find()
-            .project({ more: 0 })
-            .limit(50)
-            .toArray();
-            res.send(vacancies).status(200);
+            const { description, company, city } = req.query;
+            
+            if (!!description || !!company || !!city) {
+                let params = {};
+
+                if (!!description) {
+                    params = {
+                        ...params,
+                        description: { $regex: description, $options: 'i' }
+                    }
+                }
+
+                if (!!company) {
+                    params = {
+                        ...params,
+                        company: { $regex: company, $options: 'i' }
+                    }
+                }
+
+                if (!!city) {
+                    params = {
+                        ...params,
+                        city: { $regex: city, $options: 'i' }
+                    }
+                }
+
+                const vacancies = await db.collection('vacancies').find(params)
+                    .project({ more: 0 })
+                    .limit(10)
+                    .toArray();
+                    
+                    res.send(vacancies).status(200);
+            } else {
+                const vacancies = await db.collection('vacancies').find()
+                    .project({ more: 0 })
+                    .limit(10)
+                    .toArray();
+
+                    res.send(vacancies).status(200);
+            }
         } catch (err) {
             res.send(err).status(500);
         }
