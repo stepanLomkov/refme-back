@@ -283,7 +283,7 @@ module.exports = function(app, db) {
                 await users.updateOne(
                     { _id:  user._id },
                     {
-                        $set: { activeConfirm: false, hasCrateVacancy: false },
+                        $set: { activeConfirm: false, hasCrateVacancy: false, company: undefined, phone: undefined, confirmFile: undefined },
                     },
                 );
 
@@ -295,5 +295,156 @@ module.exports = function(app, db) {
                     message: "No JWT token"
             });
         }   
+    })
+
+    app.get('/get-confirm-employment-list', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const confirmEmploymentList = await db.collection('confirm-employment');
+
+                const list = await confirmEmploymentList.aggregate([
+                    {
+                        $lookup: {
+                            from: "users",
+                            localField: "userId",
+                            foreignField: "_id",
+                            as: "user_info"
+                        }
+                    },
+                    {
+                        $addFields: {
+                            "userLogin": { $arrayElemAt: ["$user_info.login", 0] }
+                        }
+                    }
+                ]).toArray();
+
+                return res.status(200).send(list);
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/download/:path', (req, res) => {
+        const file = `uploads/${req.params.path}`;
+
+        res.download(file);
+    });
+
+    app.get('/accept-confirm-employment/:userId', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const user = await users.findOne({
+                    _id: new ObjectId(req.params.userId),
+                }, { projection: { password: 0 } })
+
+                if (user.hasCrateVacancy || !user.activeConfirm) {
+                    return res.status(403).send({
+                        message: 'пользователь не может быть подтвержден'
+                    })
+                }
+
+                const confirmEmploymentList = await db.collection('confirm-employment');
+
+                const confirmingUser = await confirmEmploymentList.findOne({
+                    userId: new ObjectId(req.params.userId),
+                });
+
+                await users.updateOne(
+                    { _id: new ObjectId(req.params.userId) },
+                    {
+                        $set: { activeConfirm: false, hasCrateVacancy: true, company: confirmingUser.company, phone: confirmingUser.phone, confirmFile: confirmingUser.file },
+                    },
+                );
+
+                await confirmEmploymentList.deleteOne({ userId: new ObjectId(req.params.userId) });
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/reject-confirm-employment/:userId', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const user = await users.findOne({
+                    _id: new ObjectId(req.params.userId),
+                }, { projection: { password: 0 } })
+
+                if (user.hasCrateVacancy || !user.activeConfirm) {
+                    return res.status(403).send({
+                        message: 'пользователь не может быть отклонен'
+                    })
+                }
+
+                await users.updateOne(
+                    { _id: new ObjectId(req.params.userId) },
+                    {
+                        $set: { activeConfirm: false, hasCrateVacancy: false },
+                    },
+                );
+
+                const confirmEmploymentList = await db.collection('confirm-employment');
+
+                await confirmEmploymentList.deleteOne({ userId: new ObjectId(req.params.userId) });
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
     })
 };
