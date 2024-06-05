@@ -8,6 +8,7 @@ require("dotenv").config();
 const port = 8000;
 
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
 
 app.use((_, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', 'http://localhost:8080');

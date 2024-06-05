@@ -13,3 +13,4 @@ dist/
 .npm
 
 config/db.js
+uploads/

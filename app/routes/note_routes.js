@@ -1,6 +1,19 @@
 const ObjectId = require('mongodb').ObjectId;
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const multer  = require('multer')
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, 'uploads/')
+    },
+    filename: function (req, file, cb) {
+      const uniquePreffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+      cb(null, uniquePreffix + file.originalname)
+    }
+  })
+  
+const upload = multer({ storage: storage })
 
 module.exports = function(app, db) {
     app.get('/list', async (req, res) => {
@@ -83,6 +96,8 @@ module.exports = function(app, db) {
             users.insertOne({
                 login: req.body.login,
                 password: bcrypt.hashSync(req.body.password, 8),
+                hasCrateVacancy: false,
+                isAdmin: false,
             })
 
             return res.send({ message: "User Registered successfully" }).status(200);
@@ -125,7 +140,7 @@ module.exports = function(app, db) {
         const token = jwt.sign({
             id: user._id
         }, process.env.API_SECRET, {
-            expiresIn: '1h'
+            expiresIn: '24h'
         });
 
         res.status(200).send({
@@ -189,5 +204,96 @@ module.exports = function(app, db) {
                     message: "No JWT token"
             });
         }        
+    })
+
+    app.post('/confirm-employment', upload.single('file'), async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const { company, phone } = req.body;
+
+                const confirmEmploymentList = await db.collection('confirm-employment');
+
+                const hasConfirmingUser = await confirmEmploymentList.findOne({
+                    userId: user._id,
+                });
+                
+                if (hasConfirmingUser) {
+                    return res.status(400).send({
+                        message: "user already confirming",
+                    })
+                } else {
+                    confirmEmploymentList.insertOne( { company, phone, file: req.file.filename, userId: user._id, } );
+                }
+        
+                users.updateOne(
+                    { _id:  user._id },
+                    {
+                        $set: { activeConfirm: true },
+                    },
+                );
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.delete('/delete-confirm-employment',  async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                if (!user.activeConfirm && !user.hasCrateVacancy) {
+                    return res.status(400).send({
+                        message: "user no have confirm",
+                    });
+                }
+
+                const confirmEmploymentList = await db.collection('confirm-employment');
+
+                await confirmEmploymentList.deleteOne({ userId: user._id });
+                await users.updateOne(
+                    { _id:  user._id },
+                    {
+                        $set: { activeConfirm: false, hasCrateVacancy: false },
+                    },
+                );
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }   
     })
 };
