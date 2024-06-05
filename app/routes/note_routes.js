@@ -45,14 +45,14 @@ module.exports = function(app, db) {
                 }
 
                 const vacancies = await db.collection('vacancies').find(params)
-                    .project({ more: 0 })
+                    .project({ more: 0, phone: 0, file: 0, login: 0, userId: 0 })
                     .limit(10)
                     .toArray();
                     
                     res.send(vacancies).status(200);
             } else {
                 const vacancies = await db.collection('vacancies').find()
-                    .project({ more: 0 })
+                    .project({ more: 0, phone: 0, file: 0, login: 0, userId: 0 })
                     .limit(10)
                     .toArray();
 
@@ -65,8 +65,14 @@ module.exports = function(app, db) {
 
     app.get('/details/:id', async (req, res) => {
         try {
-            const query = {_id: new ObjectId(req.params.id)};
-            const vacancy = await db.collection('vacancies').findOne(query);
+            const vacancy = await db.collection('vacancies').findOne(
+                {
+                    _id: new ObjectId(req.params.id)
+                },
+                {
+                    projection: { phone: 0, login: 0, userId: 0 },
+                },
+            );
 
             if (!vacancy) {
                 res.send("Not found").status(404);
@@ -287,6 +293,12 @@ module.exports = function(app, db) {
                     },
                 );
 
+                const createRequest = await db.collection('create-request');
+
+                await createRequest.deleteMany({
+                    userId: new ObjectId(decode.id), 
+                })
+
                 return res.status(200).send();
             });
         } else {
@@ -437,6 +449,167 @@ module.exports = function(app, db) {
                 const confirmEmploymentList = await db.collection('confirm-employment');
 
                 await confirmEmploymentList.deleteOne({ userId: new ObjectId(req.params.userId) });
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.post('/create-vacancy', upload.single('file'), async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+    
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+    
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+    
+                const { description, city, more } = req.body;
+    
+                const createRequest = await db.collection('create-request');
+    
+                await createRequest.insertOne({
+                    description,
+                    city,
+                    more,
+                    file: req.file.filename,
+                    company: user.company,
+                    login: user.login,
+                    phone: user.phone,
+                    userId: user._id
+                })
+    
+    
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/get-confirm-create-vacancy-list', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const createRequest = await db.collection('create-request');
+
+                const list = await createRequest.find().toArray();
+
+                return res.status(200).send(list);
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/accept-confirm-create-vacancy/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const createRequest = await db.collection('create-request');
+
+                const {
+                    description,
+                    more,
+                    city,
+                    company,
+                    file,
+                    login,
+                    phone,
+                    userId,
+                } = await createRequest.findOne({
+                    _id: new ObjectId(req.params.id),
+                })
+
+                const vacancies = await db.collection('vacancies');
+
+                await vacancies.insertOne({
+                    description,
+                    more,
+                    city,
+                    company,
+                    file,
+                    login,
+                    phone,
+                    userId,
+                });
+
+                await createRequest.deleteOne({ _id: new ObjectId(req.params.id) });
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/reject-confirm-create-vacancy/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const createRequest = await db.collection('create-request');
+
+                await createRequest.deleteOne({ _id: new ObjectId(req.params.id) });
 
                 return res.status(200).send();
             });
