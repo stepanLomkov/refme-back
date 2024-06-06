@@ -852,6 +852,10 @@ module.exports = function(app, db) {
                             $set: { noPublicAccess: null, candidateId: null, clientInfo: null, approveRegistration: null, status: "создана" },
                         },
                     );
+
+                    const reports = await db.collection('reports');
+
+                    await reports.deleteMany({ 'vacancy._id': new ObjectId(req.params.id) })
                     
                     return res.status(200).send();
                 } else {
@@ -911,6 +915,161 @@ module.exports = function(app, db) {
                     });
                 }
 
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.post('/send-report/:id', upload.none(), async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne(
+                    {
+                        _id: new ObjectId(req.params.id),
+                    },
+                );
+
+                let result = {};
+
+                if (decode.id === vacancy?.candidateId?.toString()) {
+                    result = { reportCreator: 'соискатель' }
+                } else if (decode.id === vacancy?.userId?.toString()) {
+                    result = { reportCreator: 'сотрудник' }
+                }
+
+                const reports = await db.collection('reports');
+                reports.insertOne({
+                    ...result,
+                    text: req.body.text,
+                    vacancy,
+                })
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/get-reports-list', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const reports = await db.collection('reports');
+
+                const list = await reports.find().toArray();
+
+                return res.status(200).send(list);
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/reject-report/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const reports = await db.collection('reports');
+
+                await reports.deleteOne({ _id: new ObjectId(req.params.id) });
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/accept-report/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+                const users = await db.collection('users');
+                const adminUser = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                    isAdmin: true,
+                }, { projection: { password: 0 } })
+
+                if (err || !adminUser) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const reports = await db.collection('reports');
+                const report = await reports.findOne({ _id: new ObjectId(req.params.id) })
+                const vacancies = await db.collection('vacancies');
+
+                await vacancies.updateOne(
+                    { _id: report.vacancy._id },
+                    {
+                        $set: { noPublicAccess: null, candidateId: null, clientInfo: null, approveRegistration: null, status: "создана" },
+                    },
+                )
+
+                await users.updateOne(
+                    { _id: report.vacancy.candidateId },
+                    {
+                        $pull: { assignedVacancies: { id: report.vacancy._id } },
+                    },
+                );
+
+                await reports.deleteMany({ 'vacancy._id': report.vacancy._id })
+
+                return res.status(200).send();
             });
         } else {
             return res.status(403)
