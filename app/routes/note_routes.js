@@ -21,7 +21,7 @@ module.exports = function(app, db) {
             const { description, company, city } = req.query;
             
             if (!!description || !!company || !!city) {
-                let params = {};
+                let params = { candidateId: null, noPublicAccess: null };
 
                 if (!!description) {
                     params = {
@@ -49,17 +49,17 @@ module.exports = function(app, db) {
                     .limit(10)
                     .toArray();
                     
-                    res.send(vacancies).status(200);
+                    res.status(200).send(vacancies);
             } else {
-                const vacancies = await db.collection('vacancies').find()
+                const vacancies = await db.collection('vacancies').find({ candidateId: null, noPublicAccess: null })
                     .project({ more: 0, phone: 0, file: 0, login: 0, userId: 0 })
                     .limit(10)
                     .toArray();
 
-                    res.send(vacancies).status(200);
+                    res.status(200).send(vacancies);
             }
         } catch (err) {
-            res.send(err).status(500);
+            res.status(500).send(err);
         }
     });
 
@@ -67,7 +67,7 @@ module.exports = function(app, db) {
         try {
             const vacancy = await db.collection('vacancies').findOne(
                 {
-                    _id: new ObjectId(req.params.id)
+                    _id: new ObjectId(req.params.id),
                 },
                 {
                     projection: { phone: 0, login: 0, userId: 0 },
@@ -75,12 +75,12 @@ module.exports = function(app, db) {
             );
 
             if (!vacancy) {
-                res.send("Not found").status(404);
+                return res.status(404).send("Not found");
             }
 
-            return res.send(vacancy).status(200);
+            return res.status(200).send(vacancy);
         } catch (err) {
-            res.send(err).status(500);
+            res.status(500).send(err);
         }
     })
 
@@ -89,8 +89,7 @@ module.exports = function(app, db) {
         const password = req.body.password;
         
         if (!(login && password)) {
-            return res.send({ message: "Login and password are necessary" })
-                .status(412);
+            return res.status(412).send({ message: "Login and password are necessary" });
         }
 
         const users = db.collection('users');
@@ -106,7 +105,7 @@ module.exports = function(app, db) {
                 isAdmin: false,
             })
 
-            return res.send({ message: "User Registered successfully" }).status(200);
+            return res.status(200).send({ message: "User Registered successfully" });
         }
 
         return res.status(400).send({ message: "User Already Registered" })
@@ -117,8 +116,7 @@ module.exports = function(app, db) {
         const password = req.body.password;
         
         if (!(login && password)) {
-            return res.send({ message: "Login and password are necessary" })
-                .status(412);
+            return res.status(412).send({ message: "Login and password are necessary" });
         }
 
         const users = db.collection('users');
@@ -127,7 +125,7 @@ module.exports = function(app, db) {
         })
 
         if (!user) {
-            return res.send({ message: "User Not Found" }).status(404);
+            return res.status(404).send({ message: "User Not Found" });
         }
 
         const isPasswordValid = bcrypt.compareSync(
@@ -567,7 +565,7 @@ module.exports = function(app, db) {
 
                 const vacancies = await db.collection('vacancies');
 
-                await vacancies.insertOne({
+                const { insertedId } = await vacancies.insertOne({
                     description,
                     more,
                     city,
@@ -576,7 +574,14 @@ module.exports = function(app, db) {
                     login,
                     phone,
                     userId,
+                    status: 'создана',
                 });
+
+                await users.updateOne({
+                    _id: userId,
+                }, {
+                    $push: { createdVacancies: { description, city, id: insertedId }  }
+                })
 
                 await createRequest.deleteOne({ _id: new ObjectId(req.params.id) });
 
@@ -612,6 +617,300 @@ module.exports = function(app, db) {
                 await createRequest.deleteOne({ _id: new ObjectId(req.params.id) });
 
                 return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/assign-vacancy/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                    });
+                }
+
+                const vacancies = await db.collection('vacancies');
+
+                const data = await vacancies.findOne({ _id: new ObjectId(req.params.id) });
+                const { candidateId, description, city, company, userId, noPublicAccess } = data || {};
+
+                if (!data || noPublicAccess || !!candidateId || userId.toString() === decode.id) {
+                    return res.status(403).send({
+                        message: "uninpossible assign to vacancy",
+                    }); 
+                }
+
+                await vacancies.updateOne(
+                    { _id: new ObjectId(req.params.id) },
+                    {
+                        $set: { candidateId: new ObjectId(decode.id), noPublicAccess: true, status: "ожидание заполнения данных соискателем" },
+                    },
+                );
+
+                await users.updateOne(
+                    { _id: new ObjectId(decode.id) },
+                    { $push: { assignedVacancies: { description, city, company, id: new ObjectId(req.params.id) } } },
+                )
+
+                return res.status(200).send();
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.get('/prefill-deal/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne({ _id: new ObjectId(req.params.id) }, { projection: { description: 1, city: 1, company: 1, status: 1, userId: 1, candidateId: 1, clientInfo: 1, approveRegistration: 1 } });
+  
+                if (decode.id === vacancy?.userId?.toString() || decode.id === vacancy?.candidateId?.toString()) {
+                    return res.status(200).send({ ...vacancy, userId: undefined, areYouCreater: vacancy?.userId?.toString() === decode.id });
+                } else {
+                    return res.status(403).send({
+                        message: "доступ запрещен"
+                    });
+                }
+
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.post('/send-data/:id', upload.single('file'), async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const { familyName, firstName, lastName, dateOfBorn, phone } = req.body;
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne(
+                    {
+                        _id: new ObjectId(req.params.id),
+                    },
+                    {
+                        projection: { candidateId: 1, status: 1 },
+                    },
+                );
+
+                if (decode.id === vacancy?.candidateId?.toString() && vacancy?.status === "ожидание заполнения данных соискателем") {
+                    await vacancies.updateOne(
+                        { _id: new ObjectId(req.params.id) },
+                        {
+                            $set: { clientInfo: { familyName, firstName, lastName, dateOfBorn, phone, cv: req.file.filename, }, status: "внесение данных сотрудником в реферальную программу" },
+                        },
+                    )
+                    
+                    return res.status(200).send();
+                } else {
+                    return res.status(403).send({
+                        message: "доступ запрещен"
+                    });
+                }
+
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.post('/approve-registration/:id', upload.single('file'), async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne(
+                    {
+                        _id: new ObjectId(req.params.id),
+                    },
+                    {
+                        projection: { userId: 1, status: 1 },
+                    },
+                );
+
+                if (decode.id === vacancy?.userId?.toString() && vacancy?.status === "внесение данных сотрудником в реферальную программу") {
+                    await vacancies.updateOne(
+                        { _id: new ObjectId(req.params.id) },
+                        {
+                            $set: { approveRegistration: req.file.filename, status: "ожидание результатов сделки" },
+                        },
+                    )
+                    
+                    return res.status(200).send();
+                } else {
+                    return res.status(403).send({
+                        message: "доступ запрещен"
+                    });
+                }
+
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.post('/complete-deal/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne(
+                    {
+                        _id: new ObjectId(req.params.id),
+                    },
+                    {
+                        projection: { candidateId: 1, status: 1 },
+                    },
+                );
+
+                if (decode.id === vacancy?.candidateId?.toString() && vacancy?.status === "ожидание результатов сделки") {
+                    await users.updateOne(
+                        { _id: vacancy.candidateId },
+                        {
+                            $pull: { assignedVacancies: { id: new ObjectId(req.params.id) } },
+                        },
+                    );
+                    await vacancies.updateOne(
+                        { _id: new ObjectId(req.params.id) },
+                        {
+                            $set: { noPublicAccess: null, candidateId: null, clientInfo: null, approveRegistration: null, status: "создана" },
+                        },
+                    );
+                    
+                    return res.status(200).send();
+                } else {
+                    return res.status(403).send({
+                        message: "доступ запрещен"
+                    });
+                }
+
+            });
+        } else {
+            return res.status(403)
+                .send({
+                    message: "No JWT token"
+            });
+        }        
+    })
+
+    app.delete('/delete-vacancy/:id', async (req, res) => {
+        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
+            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
+
+                const users = await db.collection('users');
+                const user = await users.findOne({
+                    _id: new ObjectId(decode.id),
+                }, { projection: { password: 0 } })
+
+                if (err || !user) {
+                    return res.status(403)
+                        .send({
+                            message: "Invalid JWT token"
+                        });
+                }
+
+                const vacancies = await db.collection('vacancies');
+                const vacancy = await vacancies.findOne(
+                    {
+                        _id: new ObjectId(req.params.id),
+                    },
+                    {
+                        projection: { userId: 1, status: 1 },
+                    },
+                );
+
+                if (decode.id === vacancy?.userId?.toString() && vacancy?.status === "создана") {
+                    await users.updateOne(
+                        { _id: vacancy.userId },
+                        {
+                            $pull: { createdVacancies: { id: new ObjectId(req.params.id) } },
+                        },
+                    );
+                    await vacancies.deleteOne({ _id: new ObjectId(req.params.id) });
+                    
+                    return res.status(200).send();
+                } else {
+                    return res.status(403).send({
+                        message: "доступ запрещен"
+                    });
+                }
+
             });
         } else {
             return res.status(403)
