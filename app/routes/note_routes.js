@@ -89,7 +89,7 @@ module.exports = function(app, db) {
         const password = req.body.password;
         
         if (!(login && password)) {
-            return res.status(412).send({ message: "Login and password are necessary" });
+            return res.status(412).send({ message: "Введите логин и пароль", color: 'red' });
         }
 
         const users = db.collection('users');
@@ -105,10 +105,10 @@ module.exports = function(app, db) {
                 isAdmin: false,
             })
 
-            return res.status(200).send({ message: "User Registered successfully" });
+            return res.status(200).send({ message: "Успешная регистрация, авторизуйтесь", color: 'green' });
         }
 
-        return res.status(400).send({ message: "User Already Registered" })
+        return res.status(400).send({ message: "Пользователь с таким логином уже зарегистрирован", color: 'red' })
     })
 
     app.post('/login', async (req, res) => {
@@ -116,7 +116,7 @@ module.exports = function(app, db) {
         const password = req.body.password;
         
         if (!(login && password)) {
-            return res.status(412).send({ message: "Login and password are necessary" });
+            return res.status(412).send({ message: "Введите логин и пароль", color: 'red' });
         }
 
         const users = db.collection('users');
@@ -125,7 +125,7 @@ module.exports = function(app, db) {
         })
 
         if (!user) {
-            return res.status(404).send({ message: "User Not Found" });
+            return res.status(404).send({ message: "Пользователь с таким логином не зарегистрирован", color: 'red' });
         }
 
         const isPasswordValid = bcrypt.compareSync(
@@ -137,7 +137,8 @@ module.exports = function(app, db) {
             return res.status(401)
                 .send({
                     accessToken: null,
-                    message: "Invalid Password!"
+                    message: "Неверный пароль!",
+                    color: 'red',
                 });
         }
 
@@ -153,35 +154,10 @@ module.exports = function(app, db) {
                 email: user.email,
                 fullName: user.fullName,
             },
-            message: "Login successfull",
+            message: "Успешный вход",
+            color: 'green',
             accessToken: token,
         });
-    })
-
-    app.get('/some-with-auth', async (req, res) => {
-        if (req.headers && req.headers.authorization && req.headers.authorization.split(' ')[0] === 'Bearer') {
-            jwt.verify(req.headers.authorization.split(' ')[1], process.env.API_SECRET, async function (err, decode) {
-
-                const users = await db.collection('users');
-                const user = await users.findOne({
-                    _id: new ObjectId(decode.id),
-                }, { projection: { password: 0 } })
-
-                if (err || !user) {
-                    return res.status(403)
-                        .send({
-                            message: "Invalid JWT token"
-                    });
-                }
-
-                return res.status(200).send(user);
-            });
-        } else {
-            return res.status(403)
-                .send({
-                    message: "No JWT token"
-            });
-        }        
     })
 
     app.get('/profile', async (req, res) => {
